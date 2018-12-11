@@ -5,9 +5,8 @@
 library(ggplot2)
 library(dplyr)
 library(caret)
-library(kableExtra)
 library(rpart.plot)
-setwd("~/Desktop/UVA/fall18/sys6018/final project")
+setwd("~/Desktop/UVA/fall18/sys6018/sys6018-finalproject")
 
 # -------------------------------------------------------+
 # Data Preprocessing                                     |
@@ -152,11 +151,26 @@ TestData = rbind(WinningTest,LoseTest)
 train = subset(TrainingData, select = -c(T1Ftm,T2Ftm))
 test = subset(TestData, select = -c(T1Ftm,T2Ftm))
 
-train_control <- trainControl(method="repeatedcv", number=10, repeats=5)
-logistic <- train(as.factor(Win) ~ ., data = train, method="glm", trControl=train_control)
+trctrl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
+logistic <- train(as.factor(Win) ~ ., data = train, method="glm", trControl=trctrl)
 summary(logistic)
 logistic
+## AIC: 1715.7
 ## Accuracy = 0.6616808.
+
+logistic2 <- train(as.factor(Win) ~ .-Team1-Team2-T1Fgm-T1Tpa-T1DR-T1Ast-T1PF-T2Fgm-T2Tpa-T2DR
+                                     -T2Ast-T2St-T2PF, data = train, method="glm", trControl=trctrl)
+summary(logistic2)
+logistic2
+## AIC: 1701.1
+## Accuracy = 0.6709026
+
+logistic3 <- train(as.factor(Win) ~ .-Team1-Team2-T1Fgm-T1Tpa-T1DR-T1Ast-T1PF-T2Fgm-T2Tpa-T2DR
+                   -T2Ast-T2St-T2PF-Season, data = train, method="glm", trControl=trctrl)
+summary(logistic3)
+logistic3
+## AIC: 1699.1
+## Accuracy = 0.6748576
 
 
 # -------------------------------------------------------+
@@ -165,7 +179,6 @@ logistic
 ## information gain criteria
 # Train a simple decision tree
 # Train decision tree using information gain criteria:
-trctrl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
 dtree_fit_information = train(as.factor(Win) ~ ., data = train, method = "rpart",
                               parms = list(split = "information"),
                               trControl=trctrl, tuneLength = 10)
@@ -173,7 +186,11 @@ prp(dtree_fit_information$finalModel, box.palette = "Reds", tweak = 1)
 
 test_pred = predict(dtree_fit_information, newdata = test)
 confusionMatrix(test_pred, as.factor(test$Win))
-# Accuracy = 0.6393
+#            Reference
+# Prediction   0   1
+#          0 146  91
+#          1  55 110
+# Accuracy = 0.6368
 # most important variable are T1WinPct, followed by T2WinPct, T2PF, T2Fgm, etc. 
 
 ## gini criteria
@@ -183,8 +200,15 @@ dtree_fit_gini = train(as.factor(Win) ~., data = train, method = "rpart",
 prp(dtree_fit_gini$finalModel, box.palette = "Reds", tweak = 1)
 test_pred_gini = predict(dtree_fit_gini, newdata = test)
 confusionMatrix(test_pred_gini, as.factor(test$Win))
-# Accuracy = 0.6393
+#            Reference
+# Prediction   0   1
+#          0 137  89
+#          1  64 112
+# Accuracy = 0.6194
 # most important variable are also T1WinPct, followed by T2WinPct.
+
+## we will use information criteria decision tree for final predictions
+## since it gives a higher accuracy
 
 
 
@@ -197,37 +221,64 @@ confusionMatrix(test_pred_gini, as.factor(test$Win))
 # plot(rf_fit)
 # rf_fit$bestTune
 # best tune gives mtry = 5, will manually readjust mtry after initial run
-# Accuracy m = 5: 0.6121813
+# Accuracy m = 5: 0.6245842
 
 rf_fit_4 = train(as.factor(Win) ~. , data=train, method="rf",
                  trControl=trctrl, tuneGrid = expand.grid(mtry = 4))
 rf_fit_4$results
-# Accuracy m = 4: 0.6267171
+# Accuracy m = 4: 0.6229623
 
-# rf_fit_6 = train(as.factor(Win) ~. , data=train, method="rf",
-#                  trControl=trctrl, tuneGrid = expand.grid(mtry = 6))
-# rf_fit_6$results
-# Accuracy m = 6: 0.6231822
+rf_fit_6 = train(as.factor(Win) ~. , data=train, method="rf",
+                  trControl=trctrl, tuneGrid = expand.grid(mtry = 6))
+rf_fit_6$results
+# Accuracy m = 6: 0.6219669
 
-## mtry = 4 gives the best accuracy
-Importance = varImp(rf_fit_4)
+rf_fit_5 = train(as.factor(Win) ~. , data=train, method="rf",
+                 trControl=trctrl, tuneGrid = expand.grid(mtry = 5))
+## mtry = 5 gives the best accuracy
+Importance = varImp(rf_fit_5)
 plot(Importance)
-
+## the top two important variables agree with decision tree outputs
+## which are T1WinPct and T2WinPct
 
 
 # -------------------------------------------------------+
 # Support Vector Machine                                 |
 # -------------------------------------------------------+
 library(e1071)
-svm.linear=svm(as.factor(Win) ~., data=train, kernel="linear", cost=20)
+svm.linear = train(as.factor(Win) ~., data=train, method="svmLinear",
+                   trControl=trctrl, tuneGrid=data.frame(.C=c(.25, .5, 1, 5, 10, 15, 20)))
+# C      Accuracy   Kappa    
+#  0.25  0.6601314  0.3202825
+#  0.50  0.6627004  0.3254226
+#  1.00  0.6608323  0.3216953
+#  5.00  0.6580138  0.3160513
+# 10.00  0.6566152  0.3132520
+# 15.00  0.6566200  0.3132601
+# 20.00  0.6563886  0.3127963
+
+svm_linear=svm(as.factor(Win) ~., data=train, kernel="linear", cost=0.5)
 test_pred = predict(svm.linear, newdata = test)
 confusionMatrix(test_pred, as.factor(test$Win))
-# Accuracy = 0.699
+#           Reference
+# Prediction   0   1
+#          0 137  63
+#          1  64 138
+# Accuracy : 0.6841
+
+svm.poly.model = train(as.factor(Win) ~., data=train, method="svmPoly",
+                       trControl=trctrl, cost=10)
+svm.poly = train(as.factor(Win)~., data=train, method="svmPoly", trControl=trctrl,
+                 tuneGrid=svm.poly.model$bestTune)
 
 svm.poly=svm(as.factor(Win) ~., data=train, kernel="polynomial", cost=10)
 test_pred = predict(svm.poly, newdata = test)
 confusionMatrix(test_pred, as.factor(test$Win))
 # Accuracy = 0.5423
+
+svm.radial=train(as.factor(Win) ~., data=train, method="svmRadial",
+                 trControl=trctrl, tuneGrid=data.frame(.C=c(.25,.5,1,5,10,15),
+                                                       .sigma=c(.005,.05)))
 
 svm.radial=svm(as.factor(Win) ~., data=train, kernel="radial", gamma = 0.005, cost = 10)
 test_pred = predict(svm.radial, newdata = test)
