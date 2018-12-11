@@ -3,16 +3,18 @@
 # Jing Sun (js6mj), Runhao Zhao (rz6dg), Luke Kang   (sk5be)
 
 library(ggplot2)
+library(plyr)
 library(dplyr)
 library(caret)
 library(rpart.plot)
-setwd("~/Desktop/UVA/fall18/sys6018/sys6018-finalproject")
+setwd("~/Desktop/DATA MINING/sys6018-finalproject/")
 
 # -------------------------------------------------------+
 # Data Preprocessing                                     |
 # -------------------------------------------------------+
 GameStats = read.csv('RegularSeasonDetailedResults.csv')
 TourneyResults = read.csv('TourneyDetailedResults.csv')
+team = read.csv("Teams.csv")
 Slots = read.csv('TourneySlots.csv')
 Seeds = read.csv('TourneySeeds.csv')
 
@@ -48,6 +50,176 @@ AnnualSummaries = FullGame %>%
             St = mean(St), Bl = mean(Bl),
             PF = mean(PF))
 
+#=========================
+#Exploratory data analysis
+#=========================
+# calculate frequency
+rs_loc_freq <- as.data.frame(count(GameStats$Wloc))
+# calculate percentage and round to 2sf
+rs_loc_freq['percentage'] <- 100 / sum(rs_loc_freq$freq) * rs_loc_freq$freq
+rs_loc_freq['percentage_r'] <- signif(rs_loc_freq$percentage, digits = 3)
+# calculate center of each segment for label
+rs_loc_freq['pos'] <- cumsum(rs_loc_freq$percentage) - rs_loc_freq$percentage/2
+# set levels for segments so can order to match labels
+rs_loc_freq$x <- factor(rs_loc_freq$x, levels = rev(rs_loc_freq$x))
+
+#create a pie chart see  what percentage of games were won at each location (H:Home, A:Away or N:Neutral)
+p <- ggplot(rs_loc_freq, aes(x="", y=percentage_r, fill=x)) +
+  geom_bar(stat = "identity") 
+
+pie <- p + coord_polar("y") + 
+  ggtitle("Season: Percentage of games won at each location") + 
+  scale_fill_brewer("Blues") +
+  guides(fill=guide_legend(title='Location')) + 
+  geom_text(aes(y = pos, label = percentage_r), size=4)
+#display the plot
+pie
+
+#plot out the top 20 teams with the highest win percent 
+# calculate win frequency
+rs_team_Wfreq <- as.data.frame(count(GameStats$Wteam))
+rs_team_Wfreq$x <- as.factor(rs_team_Wfreq$x)
+
+# calculate loss frequency
+rs_team_Lfreq <- as.data.frame(count(GameStats$Lteam))
+rs_team_Lfreq$x <- as.factor(rs_team_Lfreq$x)
+
+# rename to a common name so can be merged with teams
+colnames(rs_team_Wfreq)[1] <- "Team_Id"
+colnames(rs_team_Lfreq)[1] <- "Team_Id"
+
+# merge data frame with teams so team names are shown as well as Team Id
+rs_team_Wfreq <- merge(rs_team_Wfreq, team, by="Team_Id")
+
+win_frequency <- merge(rs_team_Wfreq, rs_team_Lfreq, by="Team_Id")
+
+#rename columns for clarity
+colnames(win_frequency)[2] <- "Win"
+colnames(win_frequency)[4] <- "Lose"
+
+# calculate win percentage
+win_frequency["Percentage"] <- (100 / (win_frequency$Win + win_frequency$Lose)) * win_frequency$Win
+
+# team name as factor
+win_frequency$Team_Id <- as.factor(win_frequency$Team_Id)
+
+win_frequency$Team_Id <- factor(win_frequency$Team_Id, levels = win_frequency$Team_Id[order(win_frequency$Percentage)])
+
+#display the plot 
+top20 <-win_frequency[order(win_frequency$Percentage,decreasing = TRUE),][1:20,]
+ggplot(top20, aes(x=reorder(Team_Name, Percentage), y=Percentage,fill=Team_Name)) +
+  ylim(0, 100) +
+  ggtitle("Season: Percentage of games won") +
+  geom_bar(stat='identity') +
+  xlab("Team Name") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="none")
+
+# Frequency of overtime periods
+rs_ot_freq <- as.data.frame(count(GameStats$Numot))
+rs_ot_freq$x <- as.factor(rs_ot_freq$x)
+ggplot(rs_ot_freq, aes(x=x, y=freq)) +
+  ggtitle("Season: Number of Overtime Periods") +
+  geom_bar(stat='identity',fill="orange") +
+  xlab("Overtime Periods") + 
+  ylab('Frequency') +
+  geom_text(aes(label=freq), vjust=-0.3, size=3.5)
+
+
+#top20 teams with the higest average points scored every game
+# extract Wteam and Wscore 
+
+Wscores <- as.data.frame(GameStats$Wteam)
+colnames(Wscores)[1] <- "Team_Id"
+Wscores['Score'] <- GameStats$Wscore
+
+Lscores <- as.data.frame(GameStats$Lteam)
+colnames(Lscores)[1] <- "Team_Id"
+Lscores['Score'] <- GameStats$Lscore
+
+# calculate team with highest score
+AllScores <- rbind(Wscores, Lscores)
+
+Agg_Scores <- aggregate(Score ~ Team_Id, data = AllScores,  FUN = "mean")
+
+Agg_Scores <- merge(Agg_Scores, team, by = "Team_Id")
+Agg_Scores <- Agg_Scores[order(Agg_Scores$Score, decreasing = TRUE),][1:20,]
+# team name as factor
+
+
+# display the plot
+ggplot(Agg_Scores, aes(x=reorder(Team_Name,-Score), y=Score, fill=Team_Name)) +
+  ylim(0, 100) +
+  ggtitle("Season: Average Points Scored Over All Appearences (Win or Lose)") +
+  geom_bar(stat='identity') +
+  xlab("Team Name") + 
+  ylab('Average Points Scored')+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="none")
+
+# Tournament Analysis
+### Win percentage for all teams
+# calculate win frequency
+t_team_Wfreq <- as.data.frame(count(TourneyResults$Wteam))
+t_team_Wfreq$x <- as.factor(t_team_Wfreq$x)
+
+# calculate loss frequency
+t_team_Lfreq <- as.data.frame(count(TourneyResults$Lteam))
+t_team_Lfreq$x <- as.factor(t_team_Lfreq$x)
+
+# rename to a common name so can be merged with teams
+colnames(t_team_Wfreq)[1] <- "Team_Id"
+colnames(t_team_Lfreq)[1] <- "Team_Id"
+
+# merge data frame with teams so team names are shown as well as Team Id
+t_team_Wfreq <- merge(t_team_Wfreq, team, by="Team_Id")
+
+t_win_frequency <- merge(t_team_Wfreq, t_team_Lfreq, by="Team_Id")
+
+#rename columns for clarity
+colnames(t_win_frequency)[2] <- "Win"
+colnames(t_win_frequency)[4] <- "Lose"
+
+# calculate win percentage
+t_win_frequency["Percentage"] <- (100 / (t_win_frequency$Win + t_win_frequency$Lose)) * t_win_frequency$Win
+
+t_win_frequency <- t_win_frequency[order(t_win_frequency$Percentage, decreasing = TRUE),][1:20,]
+
+# plot
+ggplot(t_win_frequency, aes(x=reorder(Team_Name,-Percentage), y=Percentage,fill=Team_Name)) +
+  ylim(0, 100) +
+  ggtitle("Tournament: Percentage of games won") +
+  geom_bar(stat='identity') +
+  xlab("Team Name") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="none")
+
+##top 20 teams with the highest avearge points scored per game
+# extract Wteam and Wscore 
+
+tWscores <- as.data.frame(TourneyResults$Wteam)
+colnames(tWscores)[1] <- "Team_Id"
+tWscores['Score'] <- TourneyResults$Wscore
+
+
+tLscores <- as.data.frame(TourneyResults$Lteam)
+colnames(tLscores)[1] <- "Team_Id"
+tLscores['Score'] <- TourneyResults$Lscore
+
+
+# calculate team with highest score
+tAllScores <- rbind(tWscores, tLscores)
+
+tAgg_Scores <- aggregate(Score ~ Team_Id, data = tAllScores,  FUN = "mean")
+
+tAgg_Scores <- merge(tAgg_Scores, team, by = "Team_Id")
+
+tAgg_Scores <- tAgg_Scores[order(tAgg_Scores$Score,decreasing = TRUE),][1:20,]
+# plot
+ggplot(tAgg_Scores, aes(x=reorder(Team_Name,-Score), y=Score,fill=Team_Name))+
+  ylim(0, 100) +
+  ggtitle("Tournament: Average Points Scored Over All Appearences (Win or Lose)") +
+  geom_bar(stat='identity') +
+  xlab("Team Name") + 
+  ylab('Average Points Scored') +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),legend.position="none")
 
 # -------------------------------------------------------+
 # Train and Test sets                                    |
@@ -153,7 +325,6 @@ TestData = rbind(WinningTest,LoseTest)
 
 
 
-
 # -------------------------------------------------------+
 # Logistic Regression                                    |
 # -------------------------------------------------------+
@@ -164,28 +335,31 @@ test = subset(TestData, select = -c(T1Ftm,T2Ftm))
 trctrl = trainControl(method = "repeatedcv", number = 10, repeats = 3)
 logistic <- train(as.factor(Win) ~ ., data = train, method="glm", trControl=trctrl)
 summary(logistic)
-logistic
 ## AIC: 1715.7
-## Accuracy = 0.6616808.
+test_pred = predict(logistic, newdata = test)
+confusionMatrix(test_pred, as.factor(test$Win))
+## Accuracy = 0.6965
 
 # remove variables that are not significant
 logistic2 <- train(as.factor(Win) ~ .-Team1-Team2-T1Fgm-T1Tpa-T1DR-T1Ast-T1PF-T2Fgm-T2Tpa-T2DR
-                                     -T2Ast-T2St-T2PF, data = train, method="glm", 
+                   -T2Ast-T2St-T2PF, data = train, method="glm", 
                    trControl=trctrl)
 summary(logistic2)
-logistic2
 ## AIC: 1701.1
-## Accuracy = 0.6709026
+test_pred = predict(logistic2, newdata = test)
+confusionMatrix(test_pred, as.factor(test$Win))
+## Accuracy : 0.6791
 
 # further remove variables that are not significant in logistic2
 logistic3 <- train(as.factor(Win) ~ .-Team1-Team2-T1Fgm-T1Tpa-T1DR-T1Ast-T1PF-T2Fgm-T2Tpa-T2DR
                    -T2Ast-T2St-T2PF-Season, data = train, method="glm", trControl=trctrl)
 summary(logistic3)
-logistic3
 ## AIC: 1699.1
-## Accuracy = 0.6748576
+test_pred = predict(logistic3, newdata = test)
+confusionMatrix(test_pred, as.factor(test$Win))
+## Accuracy : 0.6791
 
-# will use logistic3 as our final logistic model
+# will use logistic as our final logistic model
 # smallest AIC, highest Accuracy
 
 
@@ -306,6 +480,8 @@ confusionMatrix(test_pred, as.factor(test$Win))
 
 
 ## svm with radial kernel
+
+# find the best tune
 svm.radial=train(as.factor(Win) ~., data=train, method="svmRadial",
                  trControl=trctrl, tuneGrid=data.frame(.C=c(.25,.5,1,5,10,15),
                                                        .sigma=.005))
@@ -317,6 +493,7 @@ svm.radial=train(as.factor(Win) ~., data=train, method="svmRadial",
 # 10.00  0.6489179  0.2977916
 # 15.00  0.6419393  0.2838421
 
+# build the model using svm with radial kernel
 svm.radial=svm(as.factor(Win) ~., data=train, kernel="radial", gamma = 0.005, cost = 1)
 test_pred = predict(svm.radial, newdata = test)
 confusionMatrix(test_pred, as.factor(test$Win))
@@ -419,13 +596,17 @@ PredictWinners = function(thisModel,Year){
   
   
   ## Round 3
+  # Use the predictions in TheseSlots to construct round 3
   Round3Games = as.data.frame(matrix(0, ncol = 33, nrow = 8))
   colnames(Round3Games)[1:33] = mycolnames
   Round3Games$Season = Year
+  # start from the 49th game (round 2)
+  # fill Team1 as the strong seed team number that won in round 2
   for (i in 1:8) {
     Round3Games[i,"Team1"] =
       Round2Pred[which(Round2Pred$Slot == as.character(TheseSlots$Strongseed[i+48])),
                  "PredictedWinner"]
+    # fill Team2 as the weak seed team number that won in round 2
     Round3Games[i,"Team2"] =
       Round2Pred[which(Round2Pred$Slot == as.character(TheseSlots$Weakseed[i+48])),
                  "PredictedWinner"]
@@ -436,11 +617,11 @@ PredictWinners = function(thisModel,Year){
       AnnualSummaries[which(AnnualSummaries$Season==Round3Games[i,"Season"] &
                               AnnualSummaries$Team ==Round3Games[i,"Team2"]),3:17]
   }
-  
   # Create predictions on round 3
   pred = predict(thisModel, Round3Games)
   Round3Pred = data.frame(Slot = Slots[49:56,"Slot"],PredictedWinner = 0)
   for (i in 1:8) {
+    
     if (pred[i] == 1){
       Round3Pred[i,"PredictedWinner"] = Round3Games[i,"Team1"]
     }
@@ -452,13 +633,17 @@ PredictWinners = function(thisModel,Year){
   
   
   ## Round 4
+  # Use the predictions in TheseSlots to construct round 4
   Round4Games = as.data.frame(matrix(0, ncol = 33, nrow = 4))
   colnames(Round4Games)[1:33] = mycolnames
   Round4Games$Season = Year
+  # start from the 57th game (round 3)
+  # fill Team1 as the strong seed team number that won in round 3
   for (i in 1:4) {
     Round4Games[i,"Team1"] =
       Round3Pred[which(Round3Pred$Slot == as.character(TheseSlots$Strongseed[i+56])),
                  "PredictedWinner"]
+    # fill Team2 as the weak seed team number that won in round 3
     Round4Games[i,"Team2"] =
       Round3Pred[which(Round3Pred$Slot == as.character(TheseSlots$Weakseed[i+56])),
                  "PredictedWinner"]
@@ -485,13 +670,17 @@ PredictWinners = function(thisModel,Year){
   
   
   ## Round 5
+  # Use the predictions in TheseSlots to construct round 4
   Round5Games = as.data.frame(matrix(0, ncol = 33, nrow = 2))
   colnames(Round5Games)[1:33] = mycolnames
   Round5Games$Season = Year
+  # start from the 61 th game (round )
+  # fill Team1 as the strong seed team number that won in round 4
   for (i in 1:2){
     Round5Games[i,"Team1"] =
       Round4Pred[which(Round4Pred$Slot == as.character(TheseSlots$Strongseed[i+60])),
                  "PredictedWinner"]
+    # fill Team1 as the week seed team number that won in round 4
     Round5Games[i,"Team2"] =
       Round4Pred[which(Round4Pred$Slot == as.character(TheseSlots$Weakseed[i+60])),
                  "PredictedWinner"]
@@ -518,13 +707,17 @@ PredictWinners = function(thisModel,Year){
   
   
   ## Round 6
+  # Use the predictions in TheseSlots to construct round 5
   Round6Games = as.data.frame(matrix(0, ncol = 33, nrow = 1))
   colnames(Round6Games)[1:33] = mycolnames
   Round6Games$Season = Year
+  # start from the 63 th game (round )
+  # fill Team1 as the strong seed team number that won in round 5
   for (i in 1:1) {
     Round6Games[i,"Team1"] =
       Round5Pred[which(Round5Pred$Slot == as.character(TheseSlots$Strongseed[i+62])),
                  "PredictedWinner"]
+    # fill Team1 as the week seed team number that won in round 5
     Round6Games[i,"Team2"] =
       Round5Pred[which(Round5Pred$Slot == as.character(TheseSlots$Weakseed[i+62])),
                  "PredictedWinner"]
@@ -628,26 +821,32 @@ CalculateScore = function(predict_col, actual_col) {
 # Make Predictions and Calculate Score                   |
 # -------------------------------------------------------+
 ## make predictions
-Prediction_2014_logi = PredictWinners(logistic3, 2014)
-Prediction_2015_logi = PredictWinners(logistic3, 2015)
-Prediction_2016_logi = PredictWinners(logistic3, 2016)
+# logistic regression
+Prediction_2014_logi = PredictWinners(logistic, 2014)
+Prediction_2015_logi = PredictWinners(logistic, 2015)
+Prediction_2016_logi = PredictWinners(logistic, 2016)
 
+# decision tree (Information gain)
 Prediction_2014_dtree = PredictWinners(dtree_fit_information, 2014)
 Prediction_2015_dtree = PredictWinners(dtree_fit_information, 2015)
 Prediction_2016_dtree = PredictWinners(dtree_fit_information, 2016)
 
+# Random forest
 Prediction_2014_rf = PredictWinners(rf_fit_5, 2014)
 Prediction_2015_rf = PredictWinners(rf_fit_5, 2015)
 Prediction_2016_rf = PredictWinners(rf_fit_5, 2016)
 
+# svm with linear kernel
 Prediction_2014_svm = PredictWinners(svm.linear, 2014)
 Prediction_2015_svm = PredictWinners(svm.linear, 2015)
 Prediction_2016_svm = PredictWinners(svm.linear, 2016)
 
+# svm with polynomial kernel
 Prediction_2014_svmpoly = PredictWinners(svm.poly, 2014)
 Prediction_2015_svmpoly = PredictWinners(svm.poly, 2015)
 Prediction_2016_svmpoly = PredictWinners(svm.poly, 2016)
 
+# svm with radial kernel
 Prediction_2014_svmrad = PredictWinners(svm.radial, 2014)
 Prediction_2015_svmrad = PredictWinners(svm.radial, 2015)
 Prediction_2016_svmrad = PredictWinners(svm.radial, 2016)
@@ -656,31 +855,38 @@ Prediction_2016_svmrad = PredictWinners(svm.radial, 2016)
 
 
 ## calculate scores
+
+# logistic regression
 score_2014_logi = CalculateScore(Prediction_2014_logi$Predicted, Prediction_2014_logi$Winner)
 score_2015_logi = CalculateScore(Prediction_2015_logi$Predicted, Prediction_2015_logi$Winner)
 score_2016_logi = CalculateScore(Prediction_2016_logi$Predicted, Prediction_2016_logi$Winner)
 
+# decison tree(based on information gain)
 score_2014_dtree = CalculateScore(Prediction_2014_dtree$Predicted, Prediction_2014_dtree$Winner)
 score_2015_dtree = CalculateScore(Prediction_2015_dtree$Predicted, Prediction_2015_dtree$Winner)
 score_2016_dtree = CalculateScore(Prediction_2016_dtree$Predicted, Prediction_2016_dtree$Winner)
 
+# random forest
 score_2014_rf = CalculateScore(Prediction_2014_rf$Predicted, Prediction_2014_rf$Winner)
 score_2015_rf = CalculateScore(Prediction_2015_rf$Predicted, Prediction_2015_rf$Winner)
 score_2016_rf = CalculateScore(Prediction_2016_rf$Predicted, Prediction_2016_rf$Winner)
 
+# svm with linear kernel
 score_2014_svm = CalculateScore(Prediction_2014_svm$Predicted, Prediction_2014_svm$Winner)
 score_2015_svm = CalculateScore(Prediction_2015_svm$Predicted, Prediction_2015_svm$Winner)
 score_2016_svm = CalculateScore(Prediction_2016_svm$Predicted, Prediction_2016_svm$Winner)
 
+# svm with polynomial kernel
 score_2014_svmpoly = CalculateScore(Prediction_2014_svmpoly$Predicted, Prediction_2014_svmpoly$Winner)
 score_2015_svmpoly = CalculateScore(Prediction_2015_svmpoly$Predicted, Prediction_2015_svmpoly$Winner)
 score_2016_svmpoly = CalculateScore(Prediction_2016_svmpoly$Predicted, Prediction_2016_svmpoly$Winner)
 
+# svm with radial kernel
 score_2014_svmrad = CalculateScore(Prediction_2014_svmrad$Predicted, Prediction_2014_svmrad$Winner)
 score_2015_svmrad = CalculateScore(Prediction_2015_svmrad$Predicted, Prediction_2015_svmrad$Winner)
 score_2016_svmrad = CalculateScore(Prediction_2016_svmrad$Predicted, Prediction_2016_svmrad$Winner)
 
-
+# combine the results 
 Year = c(2014,2015,2016)
 Score_logi = c(score_2014_logi,score_2015_logi,score_2016_logi)
 Score_dtree = c(score_2014_dtree,score_2015_dtree,score_2016_dtree)
@@ -689,11 +895,13 @@ Score_svm = c(score_2014_svm,score_2015_svm,score_2016_svm)
 Score_svmpoly = c(score_2014_svmpoly,score_2015_svmpoly,score_2016_svmpoly)
 Score_svmradial = c(score_2014_svmrad,score_2015_svmrad,score_2016_svmrad)
 
+# display the model performances
 dt <- data.frame(Year,Score_logi,Score_dtree,Score_rf,Score_svm,Score_svmpoly,Score_svmradial)
 dt
 #   Year Score_logi Score_dtree Score_rf Score_svm Score_svmpoly Score_svmradial
 # 1 2014         46          39       49        44            52              47
 # 2 2015         97          59       79       104            94              86
 # 3 2016         86          45       74        95            89              80
+
 
 
